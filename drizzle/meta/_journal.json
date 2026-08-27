@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1787835461984,
+      "tag": "0000_tense_squadron_supreme",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1787856103716,
+      "tag": "0001_mysterious_groot",
+      "breakpoints": true
+    }
+  ]
+}
