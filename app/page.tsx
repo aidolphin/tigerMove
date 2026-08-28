@@ -484,7 +484,7 @@ export default function Home() {
             </div>
             {!matchId ? (
               <div className="lobby-actions">
-                <Button size="sm" onClick={() => void createMatch()} disabled={lobbyBusy}>
+                <Button size="sm" onClick={() => void createMatch()} disabled={lobbyBusy} className="create-match-btn">
                   {lobbyBusy ? "Connecting..." : "Create match"}
                 </Button>
                 <div className="join-row">

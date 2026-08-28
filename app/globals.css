@@ -224,6 +224,33 @@ button {
 .lobby-heading small { color: #71847a; font-size: 10px; line-height: 1.4; }
 .lobby-actions { display: grid; gap: 8px; margin-top: 11px; }
 .lobby-actions button { border-radius: 8px !important; }
+
+.lobby-actions .create-match-btn {
+  background: #183f2b;
+  color: #d8e776;
+  border: 1px solid #2e6343;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.lobby-actions .create-match-btn:hover:not(:disabled) {
+  background: #234a37;
+  color: #fff;
+  border-color: #91b44c;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px #183f2b44;
+}
+
+.lobby-actions .create-match-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.lobby-actions .create-match-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .join-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
 .join-row input {
   min-width: 0;
