@@ -23,10 +23,12 @@ import {
   isAdjacent,
   type Point,
 } from "@/game/tigermove";
+import { type Difficulty, findBestMove, getAIDelay } from "@/game/ai";
 type InstallPrompt = Event & { prompt: () => Promise<void> };
 type MatchRole = "wood" | "stone";
 type ChatMessage = { id: number; senderToken: string; senderName: string; body: string; createdAt: string };
-type SavedGame = { id: string; result: "win" | "loss"; winner: MatchRole; moves: number; playedAt: string };
+type SavedGame = { id: string; result: "win" | "loss" | "draw"; winner: MatchRole; moves: number; playedAt: string };
+type GameMode = "local" | "ai" | "online";
 const points: Point[] = Array.from({ length: 25 }, (_, i) => ({
   x: i % 5,
   y: Math.floor(i / 5),
@@ -61,6 +63,13 @@ export default function Home() {
     [chatMessages, setChatMessages] = useState<ChatMessage[]>([]),
     [chatDraft, setChatDraft] = useState(""),
     [chatBusy, setChatBusy] = useState(false),
+    [gameMode, setGameMode] = useState<GameMode>("local"),
+    [aiDifficulty, setAiDifficulty] = useState<Difficulty>("medium"),
+    [aiThinking, setAiThinking] = useState(false),
+    [woodTime, setWoodTime] = useState(300),
+    [stoneTime, setStoneTime] = useState(300),
+    [timerActive, setTimerActive] = useState(false),
+    [isDraw, setIsDraw] = useState(false),
     audioContext = useRef<AudioContext | null>(null),
     draggedRef = useRef(false),
     recordedGame = useRef<string | null>(null);
@@ -127,13 +136,13 @@ export default function Home() {
     return () => window.clearInterval(interval);
   }, [matchId, matchRole]);
   useEffect(() => {
-    const recordKey = `${matchId ?? "local"}-${game.winner}-${game.winnerCounts.wood}-${game.winnerCounts.stone}`;
-    if (!game.winner || recordedGame.current === recordKey) return;
+    const recordKey = `${matchId ?? "local"}-${game.winner}-${isDraw}-${game.winnerCounts.wood}-${game.winnerCounts.stone}`;
+    if ((!game.winner && !isDraw) || recordedGame.current === recordKey) return;
     const gameId = `${matchId ?? "local"}-${Date.now()}`;
     const result: SavedGame = {
       id: gameId,
-      result: matchId ? (game.winner === matchRole ? "win" : "loss") : "win",
-      winner: game.winner,
+      result: isDraw ? "draw" : matchId ? (game.winner === matchRole ? "win" : "loss") : "win",
+      winner: game.winner ?? "wood",
       moves: moveCount,
       playedAt: new Date().toISOString(),
     };
@@ -143,7 +152,7 @@ export default function Home() {
       localStorage.setItem("tigermove-game-history", JSON.stringify(next));
       return next;
     });
-  }, [game.winner, game.winnerCounts, matchId, matchRole, moveCount]);
+  }, [game.winner, game.winnerCounts, matchId, matchRole, moveCount, isDraw]);
   useEffect(() => {
     if (!matchId || !playerToken) return;
     const syncChat = async () => {
@@ -157,6 +166,68 @@ export default function Home() {
     const interval = window.setInterval(syncChat, 1500);
     return () => window.clearInterval(interval);
   }, [matchId, playerToken, chatMessages]);
+  useEffect(() => {
+    if (gameMode !== "ai" || !started || game.winner || isDraw || turn !== "stone" || aiThinking) return;
+    const timeout = window.setTimeout(() => {
+      setAiThinking(true);
+      window.setTimeout(() => {
+        const bestMove = findBestMove(game, aiDifficulty);
+        if (bestMove) {
+          const nextGame = applyMove(game, bestMove.pieceId, bestMove.to);
+          const piece = game.pieces.find((p) => p.id === bestMove.pieceId);
+          const move = `AI (Stone): ${piece ? `${String.fromCharCode(65 + piece.x)}${5 - piece.y}` : ""} → ${String.fromCharCode(65 + bestMove.to.x)}${5 - bestMove.to.y}`;
+          setGame(nextGame);
+          setHistory((old) => [
+            move,
+            ...(nextGame.winner ? [`${nextGame.winner === "wood" ? "Wood" : "Stone"} wins`] : []),
+            ...old,
+          ].slice(0, 6));
+          setMoveCount((count) => count + 1);
+          setSelected(null);
+          playMoveSound("stone");
+          if (nextGame.winner) playEventSound("win");
+        }
+        setAiThinking(false);
+      }, getAIDelay(aiDifficulty));
+    }, 100);
+    return () => window.clearTimeout(timeout);
+  }, [game, started, game.winner, isDraw, turn, gameMode, aiDifficulty, aiThinking]);
+  useEffect(() => {
+    if (!timerActive || game.winner || isDraw) return;
+    const interval = window.setInterval(() => {
+      setStoneTime((s) => {
+        if (turn === "stone") {
+          const next = s - 1;
+          if (next <= 0) {
+            setTimerActive(false);
+            setIsDraw(true);
+            setStarted(false);
+            setHistory((old) => ["Time's up! Draw!", ...old].slice(0, 6));
+            playEventSound("end");
+            return 0;
+          }
+          return next;
+        }
+        return s;
+      });
+      setWoodTime((w) => {
+        if (turn === "wood") {
+          const next = w - 1;
+          if (next <= 0) {
+            setTimerActive(false);
+            setIsDraw(true);
+            setStarted(false);
+            setHistory((old) => ["Time's up! Draw!", ...old].slice(0, 6));
+            playEventSound("end");
+            return 0;
+          }
+          return next;
+        }
+        return w;
+      });
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [timerActive, game.winner, isDraw, turn]);
   const occupied = useMemo(
     () => new Map(pieces.map((p) => [key(p.x, p.y), p])),
     [pieces],
@@ -169,7 +240,8 @@ export default function Home() {
       ) : []
     : [];
   function playPoint(point: Point) {
-    if (!started || game.winner || (matchId && matchRole !== turn)) return;
+    if (!started || game.winner || isDraw || (matchId && matchRole !== turn)) return;
+    if (gameMode === "ai" && turn === "stone") return;
     const target = occupied.get(key(point.x, point.y));
     if (target) {
       if (target.player === turn) setSelected(target.id);
@@ -202,7 +274,7 @@ export default function Home() {
   }
   function playMoveSound(player: MatchRole) {
     if (!sound) return;
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextClass) return;
     const context = audioContext.current ?? new AudioContextClass();
     audioContext.current = context;
@@ -233,7 +305,7 @@ export default function Home() {
   }
   function playEventSound(event: "start" | "rematch" | "end" | "join" | "win") {
     if (!sound) return;
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextClass) return;
     const context = audioContext.current ?? new AudioContextClass();
     audioContext.current = context;
@@ -286,18 +358,26 @@ export default function Home() {
     setDragTarget(null);
   }
   async function reset() {
+    resetGameState();
+    if (matchId && playerToken) {
+      if (await updateMatch("rematch")) playEventSound("rematch");
+    } else {
+      playEventSound("rematch");
+    }
+  }
+  function resetGameState() {
     const nextGame = initialGameState();
     nextGame.winnerCounts = game.winnerCounts ?? { wood: 0, stone: 0 };
     setGame(nextGame);
     setStarted(false);
     setMoveCount(0);
     setSelected(null);
-    setHistory(["Ready to start", "Wood moves first"]);
-    if (matchId && playerToken) {
-      if (await updateMatch("rematch")) playEventSound("rematch");
-    } else {
-      playEventSound("rematch");
-    }
+    setAiThinking(false);
+    setIsDraw(false);
+    setWoodTime(300);
+    setStoneTime(300);
+    setTimerActive(false);
+    setHistory(["Ready to start", gameMode === "ai" ? "You are Wood, AI is Stone" : "Wood moves first"]);
   }
   async function startGame() {
     if (matchId && matchRole === "stone") return;
@@ -310,7 +390,12 @@ export default function Home() {
     setMatchStatus("active");
     setMoveCount(0);
     setSelected(null);
-    setHistory(["Match started", "Wood moves first"]);
+    setAiThinking(false);
+    setIsDraw(false);
+    setWoodTime(300);
+    setStoneTime(300);
+    setTimerActive(true);
+    setHistory(["Match started", gameMode === "ai" ? "You are Wood, AI is Stone" : "Wood moves first"]);
     if (matchId && playerToken) {
       if (await updateMatch("start")) playEventSound("start");
     } else {
@@ -476,16 +561,59 @@ export default function Home() {
       </header>
       <section className="game-layout">
         <aside className="match-panel left-panel">
+          <div className="mode-tabs">
+            <button type="button" className={`mode-tab ${gameMode === "local" ? "active" : ""}`} onClick={() => { setGameMode("local"); resetGameState(); }}>
+              <span className="mode-tab-icon">👥</span>
+              <span>Local</span>
+            </button>
+            <button type="button" className={`mode-tab ${gameMode === "ai" ? "active" : ""}`} onClick={() => { setGameMode("ai"); resetGameState(); }}>
+              <span className="mode-tab-icon">🤖</span>
+              <span>vs AI</span>
+            </button>
+            <button type="button" className={`mode-tab ${gameMode === "online" ? "active" : ""}`} onClick={() => { setGameMode("online"); resetGameState(); }}>
+              <span className="mode-tab-icon">🌐</span>
+              <span>Online</span>
+            </button>
+          </div>
+
           <h1>Stone vs Wood</h1>
           <div className="multiplayer-lobby">
             <div className="lobby-heading">
-              <strong>Play on two devices</strong>
+              <strong>{gameMode === "ai" ? "🤖 Play vs AI" : gameMode === "online" ? "🌐 Play Online" : "👥 2-Player Local"}</strong>
               <small>{lobbyMessage}</small>
             </div>
-            {!matchId ? (
+
+            {gameMode === "ai" && !started && !game.winner ? (
               <div className="lobby-actions">
-                <Button size="sm" onClick={() => void createMatch()} disabled={lobbyBusy} className="create-match-btn">
-                  {lobbyBusy ? "Connecting..." : "Create match"}
+                <div className="difficulty-selector">
+                  <label>Difficulty</label>
+                  <div className="difficulty-options">
+                    {(["easy", "medium", "hard"] as Difficulty[]).map((diff) => (
+                      <button
+                        key={diff}
+                        type="button"
+                        className={`diff-btn ${aiDifficulty === diff ? "active" : ""}`}
+                        onClick={() => setAiDifficulty(diff)}
+                      >
+                        {diff.charAt(0).toUpperCase() + diff.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <Button size="lg" onClick={() => void startGame()} className="start-game-btn">
+                  <Play size={18} /> Start Game
+                </Button>
+              </div>
+            ) : gameMode === "local" && !started && !game.winner ? (
+              <div className="lobby-actions">
+                <Button size="lg" onClick={() => void startGame()} className="start-game-btn">
+                  <Play size={18} /> Start Game
+                </Button>
+              </div>
+            ) : gameMode === "online" && !matchId ? (
+              <div className="lobby-actions">
+                <Button size="lg" onClick={() => void createMatch()} disabled={lobbyBusy} className="create-match-btn">
+                  {lobbyBusy ? "Connecting..." : "Create Match"}
                 </Button>
                 <div className="join-row">
                   <input
@@ -497,41 +625,105 @@ export default function Home() {
                   <Button size="sm" variant="outline" onClick={() => void joinMatch()} disabled={lobbyBusy}>Join</Button>
                 </div>
               </div>
-            ) : (
-              <div className="match-active-controls">
+            ) : matchId && matchStatus === "waiting" ? (
+              <div className="lobby-actions">
+                <div className="waiting-state">
+                  <div className="waiting-spinner" />
+                  <p>Waiting for opponent to join...</p>
+                  <small>Share the match ID below</small>
+                </div>
                 <div className="match-code-wrap">
-                  {copied && <span className="copy-confirmation" role="status"><Check size={12} /> ID copied</span>}
+                  {copied && <span className="copy-confirmation" role="status"><Check size={12} /> Copied!</span>}
                   <button type="button" className="match-code" title="Copy match ID" aria-label="Copy match ID" onClick={() => void copyMatchId()}>
-                    <span>Match ID <strong>{matchId}</strong></span>
+                    <span>Match ID: <strong>{matchId}</strong></span>
                     {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
                   </button>
                 </div>
-                {matchRole === "wood" && matchStatus === "waiting" && (
-                  <Button size="sm" variant="outline" className="cancel-match" onClick={() => void cancelMatch()} disabled={lobbyBusy}>
-                    <X size={14} /> Cancel match
-                  </Button>
-                )}
+                <Button size="sm" variant="outline" className="cancel-match" onClick={() => void cancelMatch()} disabled={lobbyBusy}>
+                  <X size={14} /> Cancel
+                </Button>
+              </div>
+            ) : null}
+
+            {gameMode === "online" && matchId && matchStatus === "active" && (
+              <div className="lobby-actions">
+                <div className="match-code-wrap">
+                  {copied && <span className="copy-confirmation" role="status"><Check size={12} /> Copied!</span>}
+                  <button type="button" className="match-code" title="Copy match ID" aria-label="Copy match ID" onClick={() => void copyMatchId()}>
+                    <span>Match ID: <strong>{matchId}</strong></span>
+                    {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="game-status-card">
+            <div className="status-row">
+              <span className="status-label">Mode</span>
+              <span className="status-value">{gameMode === "ai" ? "vs AI" : gameMode === "online" ? "Online" : "Local"}</span>
+            </div>
+            {gameMode === "ai" && (
+              <div className="status-row">
+                <span className="status-label">Difficulty</span>
+                <span className="status-value difficulty-badge">{aiDifficulty}</span>
+              </div>
+            )}
+            {matchId && (
+              <div className="status-row">
+                <span className="status-label">Role</span>
+                <span className={`status-value role-badge ${matchRole}`}>{matchRole === "wood" ? "Wood (You)" : "Stone (You)"}</span>
               </div>
             )}
           </div>
         </aside>
         <section className="board-stage" aria-label="TigerMove game board">
-          <div className={`turn-pill ${game.winner ? "winner" : ""} ${matchId && matchRole === turn ? "your-turn" : ""}`}>
-            <span className={`dot ${game.winner ?? turn}`} />
-            {!started
-              ? matchStatus === "cancelled" ? "Match cancelled" : matchStatus === "ended" ? "Match ended" : "Ready to start"
-              : game.winner
-              ? `${game.winner === "wood" ? "Wood" : "Stone"} wins`
-              : `${turn === "wood" ? "Wood" : "Stone"} to move`}
-            <small className="match-mode">2-PLAYER LOCAL</small>
-          </div>
-          {started && (
-            <div className="top-score" aria-label={`Wood ${game.winnerCounts.wood} wins, Stone ${game.winnerCounts.stone} wins`}>
-              <span>WOOD · <strong>{game.winnerCounts.wood}</strong> WINS</span>
-              <b>VS</b>
-              <span>STONE · <strong>{game.winnerCounts.stone}</strong> WINS</span>
+          <div className="board-status">
+            <div className={`turn-pill ${game.winner ? "winner" : ""} ${isDraw ? "draw" : ""} ${gameMode === "ai" && turn === "stone" && started && !game.winner ? "ai-turn" : ""} ${!started && !game.winner ? "idle" : ""}`}>
+              <span className={`dot ${game.winner ?? turn}`} />
+              <span className="turn-text">
+                {isDraw
+                  ? "Draw!"
+                  : !started
+                  ? matchStatus === "cancelled" ? "Match cancelled" : matchStatus === "ended" ? "Match ended" : "Ready to start"
+                  : game.winner
+                  ? `${game.winner === "wood" ? "Wood" : "Stone"} wins!`
+                  : `${turn === "wood" ? "Wood" : "Stone"} to move`}
+              </span>
+              {aiThinking && <span className="ai-thinking-indicator">AI thinking...</span>}
+              <small className="match-mode">{gameMode === "ai" ? "VS AI" : gameMode === "online" && matchId ? "ONLINE" : "2-PLAYER LOCAL"}</small>
+              {started && !game.winner && !isDraw && (
+                <div className="timer-display">
+                  <span className={`timer wood ${turn === "wood" ? "active" : ""}`}>🪵 {Math.floor(woodTime / 60)}:{(woodTime % 60).toString().padStart(2, "0")}</span>
+                  <span className="timer-divider">|</span>
+                  <span className={`timer stone ${turn === "stone" ? "active" : ""}`}>🪨 {Math.floor(stoneTime / 60)}:{(stoneTime % 60).toString().padStart(2, "0")}</span>
+                </div>
+              )}
             </div>
-          )}
+
+            {started && !game.winner && (
+              <div className="board-hint">
+                {gameMode === "ai" && turn === "stone" ? "AI is thinking..." : "Drag a piece to an adjacent dot, or tap piece then tap destination"}
+              </div>
+            )}
+
+            {started && (
+              <div className="top-score" aria-label={`Wood ${game.winnerCounts.wood} wins, Stone ${game.winnerCounts.stone} wins`}>
+                <span className="score-item wood">
+                  <span className="score-dot" />
+                  <span className="score-label">WOOD</span>
+                  <strong className="score-num">{game.winnerCounts.wood}</strong>
+                </span>
+                <span className="score-divider">VS</span>
+                <span className="score-item stone">
+                  <span className="score-dot" />
+                  <span className="score-label">STONE</span>
+                  <strong className="score-num">{game.winnerCounts.stone}</strong>
+                </span>
+              </div>
+            )}
+          </div>
+
           <div className="board-wrap" onPointerMove={updateDrag} onPointerUp={() => finishDrag(dragTarget ?? undefined)} onPointerCancel={() => finishDrag()}>
             <div className="coordinates cols">
               <i>A</i>
@@ -595,10 +787,10 @@ export default function Home() {
                 <span className={`piece ${pieces.find((candidate) => candidate.id === dragging)?.player ?? "wood"}`} />
               </span>
             )}
-            {game.winner && (
+            {(game.winner || isDraw) && (
               <div className="victory-overlay" role="status" aria-live="assertive">
-                <span>CONGRATULATIONS</span>
-                <strong>{game.winner === "wood" ? "WOOD" : "STONE"} WINS</strong>
+                <span>{isDraw ? "TIME'S UP" : "CONGRATULATIONS"}</span>
+                <strong>{isDraw ? "DRAW" : `${game.winner === "wood" ? "WOOD" : "STONE"} WINS`}</strong>
               </div>
             )}
           </div>
@@ -630,16 +822,22 @@ export default function Home() {
             </section>
           )}
           <div className="match-controls">
-            <Button className="start-game" onClick={() => void startGame()} disabled={started || (matchId !== null && matchRole === "stone")}>
-              <Play size={16} /> Start game
-            </Button>
-            <Button variant="outline" className="end-game" onClick={() => void endGame()} disabled={!started}>
-              <Square size={15} /> End game
-            </Button>
+            {!started && !game.winner && (
+              <Button className="start-game" onClick={() => void startGame()} disabled={matchId !== null && matchRole === "stone"}>
+                <Play size={16} /> Start Game
+              </Button>
+            )}
+            {started && !game.winner && (
+              <Button variant="outline" className="end-game" onClick={() => void endGame()}>
+                <Square size={15} /> End Game
+              </Button>
+            )}
+            {(game.winner || started) && (
+              <Button variant="outline" className="restart" onClick={() => void reset()}>
+                <RotateCcw size={16} /> {game.winner ? "Play Again" : "Restart"}
+              </Button>
+            )}
           </div>
-          <Button variant="outline" className="restart" onClick={() => void reset()}>
-            <RotateCcw size={16} /> Restart match
-          </Button>
         </aside>
       </section>
       <footer>
@@ -649,8 +847,8 @@ export default function Home() {
         <div className="profile-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setProfileOpen(false); }}>
           <form className="profile-dialog" onSubmit={makeProfilePermanent} role="dialog" aria-modal="true" aria-labelledby="profile-title">
             <span className="profile-icon"><UserRound size={20} /></span><h2 id="profile-title">{profileName}</h2><p>{profileEmail ? "Permanent player profile" : "Temporary player profile"}. Your match history is saved on this device.</p>
-            <div className="profile-stats"><div><strong>{savedGames.filter((game) => game.result === "win").length}</strong><small>WINS</small></div><div><strong>{savedGames.filter((game) => game.result === "loss").length}</strong><small>LOSSES</small></div><div><strong>{savedGames.length}</strong><small>GAMES</small></div></div>
-            {savedGames.length > 0 && <div className="profile-history"><strong>Recent games</strong>{savedGames.slice(0, 5).map((game) => <div key={game.id}><span className={game.result}>{game.result === "win" ? "WIN" : "LOSS"}</span><p>{game.winner === "wood" ? "Wood" : "Stone"} won · {game.moves} moves</p><small>{new Date(game.playedAt).toLocaleDateString()}</small></div>)}</div>}
+            <div className="profile-stats"><div><strong>{savedGames.filter((game) => game.result === "win").length}</strong><small>WINS</small></div><div><strong>{savedGames.filter((game) => game.result === "loss").length}</strong><small>LOSSES</small></div><div><strong>{savedGames.filter((game) => game.result === "draw").length}</strong><small>DRAWS</small></div><div><strong>{savedGames.length}</strong><small>GAMES</small></div></div>
+            {savedGames.length > 0 && <div className="profile-history"><strong>Recent games</strong>{savedGames.slice(0, 5).map((game) => <div key={game.id}><span className={game.result}>{game.result === "win" ? "WIN" : game.result === "loss" ? "LOSS" : "DRAW"}</span><p>{game.winner === "wood" ? "Wood" : "Stone"} won · {game.moves} moves</p><small>{new Date(game.playedAt).toLocaleDateString()}</small></div>)}</div>}
             <label>Name<input value={profileName} onChange={(event) => setProfileName(event.target.value)} required maxLength={40} /></label>
             <label>Valid email<input type="email" value={profileEmail} onChange={(event) => setProfileEmail(event.target.value)} required placeholder="you@example.com" /></label>
             <div className="profile-actions"><Button type="button" variant="outline" onClick={() => setProfileOpen(false)}>Later</Button><Button type="submit" disabled={profileBusy}>{profileBusy ? "Saving..." : "Make permanent"}</Button></div>
