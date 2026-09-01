@@ -1,1 +1,51 @@
-{"name":"TigerMove: Stone vs Wood","short_name":"TigerMove","description":"A timeless strategy game by Quantum Leaf Automation.","start_url":"/","display":"standalone","background_color":"#e9e3d5","theme_color":"#183f2b","orientation":"any","icons":[{"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
+{
+  "name": "TigerMove: Stone vs Wood",
+  "short_name": "TigerMove",
+  "description": "A timeless strategy game of position, patience and capture by Quantum Leaf Automation.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#eaf5ef",
+  "theme_color": "#183f2b",
+  "categories": ["games", "strategy", "board games"],
+  "lang": "en",
+  "dir": "ltr",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Play Local",
+      "short_name": "Local",
+      "description": "Start a local 2-player game",
+      "url": "/?mode=local",
+      "icons": [
+        {
+          "src": "/icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "Play vs AI",
+      "short_name": "vs AI",
+      "description": "Start a game against AI",
+      "url": "/?mode=ai",
+      "icons": [
+        {
+          "src": "/icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ]
+}

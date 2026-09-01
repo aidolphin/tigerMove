@@ -110,9 +110,10 @@ function getValidMoves(state: GameState): Point[] {
         if (dx === 0 && dy === 0) continue;
         const nx = piece.x + dx;
         const ny = piece.y + dy;
-        if (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE && !occupied.has(`${nx}-${ny}`)) {
-          moves.push({ x: nx, y: ny });
-        }
+        if (nx < 0 || nx >= BOARD_SIZE || ny < 0 || ny >= BOARD_SIZE) continue;
+        if (occupied.has(`${nx}-${ny}`)) continue;
+        if (!isAdjacent(piece, { x: nx, y: ny })) continue;
+        moves.push({ x: nx, y: ny });
       }
     }
   }

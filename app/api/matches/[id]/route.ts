@@ -2,6 +2,9 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { matches, moves } from "../../../../db/schema";
 import { applyMove, initialGameState, type GameState, type Point } from "../../../../game/tigermove";
+import { getClientIdentifier, createRateLimiter } from "../../../../lib/rate-limit";
+
+const moveLimiter = createRateLimiter();
 
 async function readMatch(id: string) {
   const db = getDb();
@@ -16,11 +19,15 @@ function getRole(match: { hostToken: string; guestToken: string | null }, token:
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const match = await readMatch((await params).id);
+  const id = (await params).id;
+  const token = request.headers.get("x-player-token");
+  const match = await readMatch(id);
   if (!match) return Response.json({ error: "Match not found" }, { status: 404 });
+  const role = getRole(match, token);
+  if (!role) return Response.json({ error: "A valid player token is required" }, { status: 401 });
   return Response.json({
     match: { id: match.id, state: match.state, status: match.status, createdAt: match.createdAt, updatedAt: match.updatedAt },
   });
@@ -31,15 +38,23 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const id = (await params).id;
-  const payload = (await request.json()) as { pieceId?: string; to?: Point };
-  if (!payload.pieceId || !payload.to) {
-    return Response.json({ error: "pieceId and to are required" }, { status: 400 });
+  const identifier = getClientIdentifier(request);
+  if (!moveLimiter.check(identifier, 10, 60000)) {
+    return Response.json({ error: "Too many requests" }, { status: 429 });
+  }
+
+  const payload = (await request.json()) as { pieceId?: string; to?: Point; sequence?: number };
+  if (!payload.pieceId || !payload.to || typeof payload.to.x !== "number" || typeof payload.to.y !== "number") {
+    return Response.json({ error: "pieceId and valid to coordinates are required" }, { status: 400 });
   }
 
   const match = await readMatch(id);
   if (!match) return Response.json({ error: "Match not found" }, { status: 404 });
   const role = getRole(match, request.headers.get("x-player-token"));
   if (!role) return Response.json({ error: "A valid player token is required" }, { status: 401 });
+  if (match.status !== "active") {
+    return Response.json({ error: "Match is not active" }, { status: 403 });
+  }
   if (role !== (match.state as GameState).turn) {
     return Response.json({ error: "It is not your turn" }, { status: 403 });
   }
@@ -72,8 +87,16 @@ export async function PATCH(
   const role = getRole(match, request.headers.get("x-player-token"));
   if (!role) return Response.json({ error: "A valid player token is required" }, { status: 401 });
   if (!payload.action) return Response.json({ error: "An action is required" }, { status: 400 });
-  if ((payload.action === "start" || payload.action === "cancel") && role !== "wood") {
-    return Response.json({ error: "Only the host can manage this match" }, { status: 403 });
+
+  const allowedActions: Record<string, string> = {
+    start: "wood",
+    cancel: "wood",
+    rematch: "wood",
+    end: "stone",
+  };
+
+  if (allowedActions[payload.action] !== role) {
+    return Response.json({ error: "You are not authorized for this action" }, { status: 403 });
   }
 
   const db = getDb();

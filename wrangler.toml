@@ -6,3 +6,13 @@ compatibility_flags = ["nodejs_compat"]
 binding = "DB"
 database_name = "site-creator-d1"
 database_id = "00000000-0000-4000-8000-000000000000"
+
+[durable_objects]
+bindings = [
+  { name = "MATCH", class_name = "Match" },
+  { name = "MATCHMAKING", class_name = "MatchmakingQueue" },
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["Match", "MatchmakingQueue"]

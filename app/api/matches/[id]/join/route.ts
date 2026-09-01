@@ -1,11 +1,19 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../../../../db";
 import { matches } from "../../../../../db/schema";
+import { getClientIdentifier, createRateLimiter } from "../../../../../lib/rate-limit";
+
+const joinLimiter = createRateLimiter();
 
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const identifier = getClientIdentifier(_request);
+  if (!joinLimiter.check(identifier, 3, 60000)) {
+    return Response.json({ error: "Too many join attempts" }, { status: 429 });
+  }
+
   const id = (await params).id;
   const db = getDb();
   const [match] = await db.select().from(matches).where(eq(matches.id, id)).limit(1);

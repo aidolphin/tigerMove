@@ -1,6 +1,9 @@
 import { and, eq, gt } from "drizzle-orm";
 import { getDb } from "../../../../../db";
 import { matches, messages } from "../../../../../db/schema";
+import { getClientIdentifier, createRateLimiter } from "../../../../../lib/rate-limit";
+
+const chatLimiter = createRateLimiter();
 
 function getRole(match: { hostToken: string; guestToken: string | null }, token: string | null) {
   if (token && token === match.hostToken) return "wood";
@@ -22,13 +25,21 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const id = (await params).id;
+  const identifier = getClientIdentifier(request);
+  if (!chatLimiter.check(identifier, 5, 60000)) {
+    return Response.json({ error: "Too many messages" }, { status: 429 });
+  }
+
   const token = request.headers.get("x-player-token");
   const payload = (await request.json()) as { name?: string; body?: string };
   const body = payload.body?.trim();
   if (!body || body.length > 240) return Response.json({ error: "Message must be 1 to 240 characters" }, { status: 400 });
+
   const db = getDb();
   const [match] = await db.select().from(matches).where(eq(matches.id, id)).limit(1);
   if (!match || !getRole(match, token)) return Response.json({ error: "A valid player token is required" }, { status: 401 });
+  if (match.status !== "active") return Response.json({ error: "Match is not active" }, { status: 403 });
+
   const [message] = await db.insert(messages).values({ matchId: id, senderToken: token!, senderName: payload.name?.trim().slice(0, 40) || "Guest", body }).returning();
   return Response.json({ message }, { status: 201 });
 }
