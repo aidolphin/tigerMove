@@ -15,4 +15,4 @@ bindings = [
 
 [[migrations]]
 tag = "v1"
-new_classes = ["Match", "MatchmakingQueue"]
+new_sqlite_classes = ["Match", "MatchmakingQueue"]
