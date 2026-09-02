@@ -2,6 +2,11 @@ name = "tigermove"
 main = "./dist/server/index.js"
 compatibility_flags = ["nodejs_compat"]
 
+[[d1_databases]]
+binding = "DB"
+database_name = "tigermove"
+database_id = "eee2f69e-913c-4a54-a02f-a8690525f8b1"
+
 [durable_objects]
 bindings = [
   { name = "MATCH", class_name = "Match" },
